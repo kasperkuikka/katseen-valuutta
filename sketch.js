@@ -36,16 +36,16 @@ const STATE_CHANGE_DELAY = 1000; // 1 sekunti (ms)
 let targetState = "IDLE";
 
 // UUSI: Jonotusnumero-logiikka
-let queueNumber = 847; // Aloitusnumero
-const QUEUE_ADVANCE_RATE = 0.15; // Kuinka nopeasti numero etenee (per frame)
-const QUEUE_RETREAT_RATE = 0.25; // Kuinka nopeasti numero peruuttaa
+let queueNumber = 50; // Aloitusnumero
+const QUEUE_ADVANCE_RATE = 0.28; // ~3 min kunnes 1 (50 / (0.28 * 60fps) ≈ 3 min)
+const QUEUE_RETREAT_RATE = 0.45; // Nopeampi rangaistus
 const SISYPHUS_NUMBER = 1; // Sisyfos-loukun numero
 let reachedSisyphus = false;
 
 // UUSI: Placeholder istumiselle (myöhemmin painoanturi)
 let isSeated = false; // Simuloidaan näppäimellä 'S'
 
-// UUSI: Tilatekstit
+// UUSI: Tilatekstit (SUOMEKSI)
 const STATE_MESSAGES = {
   IDLE: "Odota...",
   COMPLIANCE: "Kiitos yhteistyöstä",
@@ -102,7 +102,7 @@ function keyPressed() {
       // Kun käyttäjä istuu, aloitetaan IDLE-tilasta
       currentState = "IDLE";
       targetState = "IDLE";
-      queueNumber = 847; // Nollataan numero
+      queueNumber = 50; // Nollataan numero
       reachedSisyphus = false;
     }
   }
@@ -228,7 +228,7 @@ function drawWaitingScreen() {
   fill(100);
   textAlign(CENTER, CENTER);
   textSize(32);
-  text("Istu alas aloittaaksesi", width/2, height/2);
+  text("Odota vuoroasi", width/2, height/2);
   textSize(16);
   text("(Paina S simuloidaksesi)", width/2, height/2 + 40);
 }
