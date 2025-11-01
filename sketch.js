@@ -35,17 +35,22 @@ let stateTimer = 0;
 const STATE_CHANGE_DELAY = 1000; // 1 sekunti (ms)
 let targetState = "IDLE";
 
-// UUSI: Jonotusnumero-logiikka
-let queueNumber = 20; // Aloitusnumero
-const QUEUE_ADVANCE_RATE = 0.0667; // Yksi numero ~15 sekunnissa (1 / (15s * 60fps))
+// UUSI: Jonotusnumero-logiikka (2 MIN KOKONAISAIKA)
+let queueNumber = 30; // Aloitusnumero
+// Ensimmäinen minuutti: 30 → 15 (15 numeroa / 60s = 0.25 per sekunti)
+// Toinen minuutti: 15 → 1 (14 numeroa / 60s, hidastuva)
+let QUEUE_ADVANCE_RATE = 0.25 / 60; // Aloitusnopeus (per frame, 60fps)
 const QUEUE_RETREAT_RATE = 0.15; // Nopeampi rangaistus
 const SISYPHUS_NUMBER = 1; // Sisyfos-loukun numero
 let reachedSisyphus = false;
 
 // UUSI: Äänen dramaturgia (3 vaihetta)
 let dramaturgicalPhase = 1; // 1 = Lämmin, 2 = Mekaaninen, 3 = Kylmä
-const PHASE_2_THRESHOLD = 13; // Puoliväli (20→1, eli ~13)
-const PHASE_3_THRESHOLD = 6;  // Loppusuora
+const PHASE_2_THRESHOLD = 20; // 30-20: Lämmin
+const PHASE_3_THRESHOLD = 5;  // 5-1: Kylmä
+
+// Hidastumisen hallinta
+const SLOWDOWN_THRESHOLD = 15; // Kun numero saavuttaa 15, hidastuu
 
 // UUSI: Placeholder istumiselle (myöhemmin painoanturi)
 let isSeated = false; // Simuloidaan näppäimellä 'S'
@@ -115,9 +120,10 @@ function keyPressed() {
       // Kun käyttäjä istuu, aloitetaan IDLE-tilasta
       currentState = "IDLE";
       targetState = "IDLE";
-      queueNumber = 20; // Nollataan numero
+      queueNumber = 30; // Nollataan numero
       reachedSisyphus = false;
       dramaturgicalPhase = 1; // Aloitetaan lämpimästä
+      QUEUE_ADVANCE_RATE = 0.25 / 60; // Nollataan nopeus
     }
   }
 }
@@ -208,13 +214,20 @@ function draw() {
           // Numero etenee
           queueNumber = Math.max(SISYPHUS_NUMBER, queueNumber - QUEUE_ADVANCE_RATE);
           
+          // HIDASTUMINEN: Kun numero saavuttaa 15, nopeus puolittuu asteittain
+          if (queueNumber <= SLOWDOWN_THRESHOLD) {
+            // Laskee nopeutta lineaarisesti numeroiden 15→1 välillä
+            let slowdownFactor = (queueNumber - 1) / (SLOWDOWN_THRESHOLD - 1);
+            QUEUE_ADVANCE_RATE = (0.25 / 60) * slowdownFactor * 0.7;
+          }
+          
           // Päivitetään dramaturginen vaihe numeron perusteella
           if (queueNumber <= PHASE_3_THRESHOLD) {
-            dramaturgicalPhase = 3; // KYLMÄ
+            dramaturgicalPhase = 3; // KYLMÄ (5-1)
           } else if (queueNumber <= PHASE_2_THRESHOLD) {
-            dramaturgicalPhase = 2; // MEKAANINEN
+            dramaturgicalPhase = 2; // MEKAANINEN (20-5)
           } else {
-            dramaturgicalPhase = 1; // LÄMMIN
+            dramaturgicalPhase = 1; // LÄMMIN (30-20)
           }
           
           // Tarkistetaan Sisyfos-loukku
@@ -225,7 +238,7 @@ function draw() {
           }
         } else if (currentState === "RESISTANCE") {
           // Numero peruuttaa
-          queueNumber = Math.min(20, queueNumber + QUEUE_RETREAT_RATE);
+          queueNumber = Math.min(30, queueNumber + QUEUE_RETREAT_RATE);
         }
       }
       // Jos Sisyfos-loukku on aktiivinen, numero pysyy 1:ssä
@@ -240,7 +253,7 @@ function draw() {
     drawErrorScreen("EI KASVOJA");
     // Jos kasvoja ei näy ja ollaan istuneena, peruutetaan numeroa
     if (isSeated && !reachedSisyphus) {
-      queueNumber = Math.min(20, queueNumber + QUEUE_RETREAT_RATE);
+      queueNumber = Math.min(30, queueNumber + QUEUE_RETREAT_RATE);
     }
   }
 }
@@ -294,11 +307,11 @@ function drawUI(state, queueNum, yaw, pitch) {
   
   fill(bgColor);
   noStroke();
-  rect(0, height - 220, width, 220);
+  rect(0, height - 180, width, 180);
 
-  // Jonotusnumero (PÄÄELEMENTTI)
+  // Jonotusnumero (PIENEMPI TEKSTI)
   textAlign(CENTER, CENTER);
-  textSize(90);
+  textSize(60);
   
   if (reachedSisyphus) {
     fill(255, 200, 0); // Kulta/keltainen
@@ -306,10 +319,10 @@ function drawUI(state, queueNum, yaw, pitch) {
     fill(255);
   }
   
-  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2, height - 140);
+  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2, height - 120);
 
-  // Tilailmoitus - VAIHTELEE DRAMATURGIAN MUKAAN
-  textSize(20);
+  // Tilailmoitus - PIENEMPI TEKSTI
+  textSize(16);
   let message = "";
   
   if (state === "COMPLIANCE") {
