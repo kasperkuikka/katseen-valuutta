@@ -29,46 +29,54 @@ let faces = [];
 let yawSmoother = new SimpleMovingAverage(5);
 let pitchSmoother = new SimpleMovingAverage(5);
 
-// UUSI: Hystereesi ja viive tilanvaihdossa
-let currentState = "IDLE"; // "IDLE", "COMPLIANCE", "RESISTANCE", "REJECTED"
+// Hystereesi ja viive
+let currentState = "IDLE";
 let stateTimer = 0;
-const STATE_CHANGE_DELAY = 1000; // 1 sekunti (ms)
+const STATE_CHANGE_DELAY = 1000;
 let targetState = "IDLE";
 
-// UUSI: Jonotusnumero-logiikka (2 MIN KOKONAISAIKA)
-let queueNumber = 30; // Aloitusnumero
-// Ensimmäinen minuutti: 30 → 15 (15 numeroa / 60s = 0.25 per sekunti)
-// Toinen minuutti: 15 → 1 (14 numeroa / 60s, hidastuva)
-let QUEUE_ADVANCE_RATE = 0.25 / 60; // Aloitusnopeus (per frame, 60fps)
-const QUEUE_RETREAT_RATE = 0.15; // Nopeampi rangaistus
-const SISYPHUS_NUMBER = 1; // Sisyfos-loukun numero
+// Jonotusnumero-logiikka
+let queueNumber = 30;
+let QUEUE_ADVANCE_RATE = 0.25 / 60;
+const QUEUE_RETREAT_RATE = 0.15;
+const SISYPHUS_NUMBER = 1;
 let reachedSisyphus = false;
 
-// UUSI: Äänen dramaturgia (3 vaihetta)
-let dramaturgicalPhase = 1; // 1 = Lämmin, 2 = Mekaaninen, 3 = Kylmä
-const PHASE_2_THRESHOLD = 20; // 30-20: Lämmin
-const PHASE_3_THRESHOLD = 5;  // 5-1: Kylmä
+// Dramaturgia
+let dramaturgicalPhase = 1;
+const PHASE_2_THRESHOLD = 20;
+const PHASE_3_THRESHOLD = 5;
+const SLOWDOWN_THRESHOLD = 15;
 
-// Hidastumisen hallinta
-const SLOWDOWN_THRESHOLD = 15; // Kun numero saavuttaa 15, hidastuu
+// Istuminen (simuloitu)
+let isSeated = false;
 
-// UUSI: Placeholder istumiselle (myöhemmin painoanturi)
-let isSeated = false; // Simuloidaan näppäimellä 'S'
+// Korporaatiomainen diaesitys
+let slideIndex = 0;
+let slideTimer = 0;
+const SLIDE_DURATION = 8000; // 8 sekuntia per dia
 
-// UUSI: Tilatekstit (MUUTTUVAT DRAMATURGIAN MUKAAN)
+const slides = [
+  { text: 'HARMONIA', subtitle: 'Yhdessä kohti tulevaisuutta' },
+  { text: 'YHTEYS', subtitle: 'Olemme täällä sinua varten' },
+  { text: 'KEHITYS', subtitle: 'Jatkuva parantaminen' },
+  { text: 'LUOTTAMUS', subtitle: 'Turvallinen yhteistyö' }
+];
+
+// Tilatekstit
 const STATE_MESSAGES = {
-  IDLE: "Odota...",
+  IDLE: 'Odota...',
   COMPLIANCE: {
-    phase1: "Kiitos että odotat. Olemme täällä sinua varten.",
-    phase2: "Pysy paikallasi. Vuorosi lähestyy.",
-    phase3: "Odota. Älä liiku."
+    phase1: 'Kiitos että odotat. Olemme täällä sinua varten.',
+    phase2: 'Pysy paikallasi. Vuorosi lähestyy.',
+    phase3: 'Odota. Älä liiku.'
   },
   RESISTANCE: {
-    phase1: "Ole hyvä ja katso näyttöä",
-    phase2: "KATSO NÄYTTÖÄ",
-    phase3: "KATSO. NÄYTTÖÄ."
+    phase1: 'Ole hyvä ja katso näyttöä',
+    phase2: 'KATSO NÄYTTÖÄ',
+    phase3: 'KATSO. NÄYTTÖÄ.'
   },
-  REJECTED: "Yhteytesi ei ole enää tarpeellinen."
+  REJECTED: 'Yhteytesi ei ole enää tarpeellinen.'
 };
 
 // --- MALLIN LATAUS ---
@@ -84,12 +92,11 @@ function preload() {
 
 // --- ALUSTUS ---
 function setup() {
-  createCanvas(640, 480);
+  createCanvas(windowWidth, windowHeight);
   video = createCapture(VIDEO, videoReady);
-  video.size(width, height);
+  video.size(640, 480);
   video.hide();
   
-  // Simuloidaan istuminen aloitettaessa (poista kun anturi on käytössä)
   console.log('Paina S-näppäintä simuloidaksesi istumista/nousemista');
 }
 
@@ -107,58 +114,59 @@ function gotFaces(results) {
   detectFaces();
 }
 
-// --- NÄPPÄINSIMULOINTIT (POISTETAAN KUN ANTURI ON KÄYTÖSSÄ) ---
+// --- NÄPPÄINSIMULOINTIT ---
 function keyPressed() {
   if (key === 's' || key === 'S') {
     isSeated = !isSeated;
     console.log(`isSeated: ${isSeated}`);
     if (!isSeated) {
-      // Kun käyttäjä nousee, siirrytään REJECTED-tilaan
       currentState = "REJECTED";
       targetState = "REJECTED";
     } else {
-      // Kun käyttäjä istuu, aloitetaan IDLE-tilasta
       currentState = "IDLE";
       targetState = "IDLE";
-      queueNumber = 30; // Nollataan numero
+      queueNumber = 30;
       reachedSisyphus = false;
-      dramaturgicalPhase = 1; // Aloitetaan lämpimästä
-      QUEUE_ADVANCE_RATE = 0.25 / 60; // Nollataan nopeus
+      QUEUE_ADVANCE_RATE = 0.25 / 60;
+      dramaturgicalPhase = 1;
     }
   }
 }
 
 // --- PÄÄSILMUKKA ---
 function draw() {
-  background(20); // Tumma tausta
+  // KLIININEN TAUSTA
+  background(230, 235, 240);
   
-  // Piirretään peilikuva videosta
-  push();
-  translate(width, 0);
-  scale(-1, 1);
-  image(video, 0, 0, width, height);
-  pop();
-
-  // --- TILA C: REJECTED (Hylkäys) ---
+  // Diaesitys taustalla (hyvin himmeä)
+  drawSlideshow();
+  
+  // TILA C: REJECTED
   if (currentState === "REJECTED") {
     drawRejectedScreen();
-    return; // Lopetetaan tähän, ei käsitellä muita tiloja
+    return;
   }
 
-  // --- Tarkistetaan istuminen ---
+  // Odotusruutu
   if (!isSeated) {
     drawWaitingScreen();
     return;
   }
 
-  // --- KASVOJEN TUNNISTUS JA LOGIIKKA ---
+  // Piilotettu video (pieni esikatselu debug-tarkoituksiin)
+  push();
+  translate(160, 0);
+  scale(-1, 1);
+  image(video, 0, 0, 160, 120);
+  pop();
+
+  // KASVOJEN TUNNISTUS
   if (faces.length > 0) {
     const face = faces[0];
 
     if (face.keypoints) {
       const keypoints = face.keypoints;
 
-      // Haetaan maamerkit
       const nose = keypoints[1];
       const leftCheek = keypoints[234];
       const rightCheek = keypoints[454];
@@ -185,18 +193,18 @@ function draw() {
       const yaw_proxy = yawSmoother.getMean();
       const pitch_proxy = pitchSmoother.getMean();
 
-      // --- KYNNYSARVOT (SÄÄDÄ TARPEEN MUKAAN) ---
+      // KYNNYSARVOT
       const YAW_THRESHOLD = 30;
       const PITCH_THRESHOLD = 20;
 
-      // Määritetään tavoitetila kasvojen asennon perusteella
+      // Määritetään tavoitetila
       if (Math.abs(yaw_proxy) < YAW_THRESHOLD && Math.abs(pitch_proxy) < PITCH_THRESHOLD) {
-        targetState = "COMPLIANCE"; // Katsoo suoraan
+        targetState = "COMPLIANCE";
       } else {
-        targetState = "RESISTANCE"; // Katsoo pois
+        targetState = "RESISTANCE";
       }
 
-      // --- HYSTEREESI: Tilanvaihto viiveellä ---
+      // HYSTEREESI
       if (targetState !== currentState) {
         stateTimer += deltaTime;
         if (stateTimer >= STATE_CHANGE_DELAY) {
@@ -205,43 +213,39 @@ function draw() {
           console.log(`Tila vaihdettu: ${currentState}`);
         }
       } else {
-        stateTimer = 0; // Nollataan ajastin jos tila pysyy samana
+        stateTimer = 0;
       }
 
-      // --- JONOTUSNUMERO-LOGIIKKA ---
+      // JONOTUSNUMERO-LOGIIKKA
       if (!reachedSisyphus) {
         if (currentState === "COMPLIANCE") {
-          // Numero etenee
           queueNumber = Math.max(SISYPHUS_NUMBER, queueNumber - QUEUE_ADVANCE_RATE);
           
-          // HIDASTUMINEN: Kun numero saavuttaa 15, nopeus puolittuu asteittain
+          // HIDASTUMINEN
           if (queueNumber <= SLOWDOWN_THRESHOLD) {
-            // Laskee nopeutta lineaarisesti numeroiden 15→1 välillä
             let slowdownFactor = (queueNumber - 1) / (SLOWDOWN_THRESHOLD - 1);
             QUEUE_ADVANCE_RATE = (0.25 / 60) * slowdownFactor * 0.7;
           }
           
-          // Päivitetään dramaturginen vaihe numeron perusteella
+          // Dramaturginen vaihe
           if (queueNumber <= PHASE_3_THRESHOLD) {
-            dramaturgicalPhase = 3; // KYLMÄ (5-1)
+            dramaturgicalPhase = 3;
           } else if (queueNumber <= PHASE_2_THRESHOLD) {
-            dramaturgicalPhase = 2; // MEKAANINEN (20-5)
+            dramaturgicalPhase = 2;
           } else {
-            dramaturgicalPhase = 1; // LÄMMIN (30-20)
+            dramaturgicalPhase = 1;
           }
           
-          // Tarkistetaan Sisyfos-loukku
+          // Sisyfos-loukku
           if (queueNumber <= SISYPHUS_NUMBER) {
             queueNumber = SISYPHUS_NUMBER;
             reachedSisyphus = true;
             console.log("SISYFOS-LOUKKU AKTIVOITU!");
           }
         } else if (currentState === "RESISTANCE") {
-          // Numero peruuttaa
           queueNumber = Math.min(30, queueNumber + QUEUE_RETREAT_RATE);
         }
       }
-      // Jos Sisyfos-loukku on aktiivinen, numero pysyy 1:ssä
 
       // Piirretään UI
       drawUI(currentState, queueNumber, yaw_proxy, pitch_proxy);
@@ -251,104 +255,212 @@ function draw() {
     }
   } else {
     drawErrorScreen("EI KASVOJA");
-    // Jos kasvoja ei näy ja ollaan istuneena, peruutetaan numeroa
     if (isSeated && !reachedSisyphus) {
       queueNumber = Math.min(30, queueNumber + QUEUE_RETREAT_RATE);
     }
   }
+  
+  // Päivitä diaesitys
+  slideTimer += deltaTime;
+  if (slideTimer >= SLIDE_DURATION) {
+    slideIndex = (slideIndex + 1) % slides.length;
+    slideTimer = 0;
+  }
 }
 
-// --- APUFUNKTIOT ERI NÄYTTÖIHIN ---
+// --- DIAESITYS TAUSTALLA ---
+function drawSlideshow() {
+  push();
+  textAlign(CENTER, CENTER);
+  fill(100, 110, 120, 25); // Erittäin himmeä
+  noStroke();
+  
+  // Suuri otsikko
+  textSize(min(width * 0.15, 180));
+  textFont('sans-serif');
+  textStyle(BOLD);
+  text(slides[slideIndex].text, width/2, height/2 - 50);
+  
+  // Alaotsikko
+  textSize(min(width * 0.04, 48));
+  textStyle(NORMAL);
+  text(slides[slideIndex].subtitle, width/2, height/2 + 80);
+  pop();
+}
+
+// --- APUFUNKTIOT ---
 
 function drawWaitingScreen() {
-  fill(100);
+  // Keskitetty laatikko
+  push();
+  rectMode(CENTER);
+  
+  // Varjo
+  fill(0, 0, 0, 10);
+  noStroke();
+  rect(width/2 + 3, height/2 + 3, 500, 300, 8);
+  
+  // Päälaatikko
+  fill(245, 248, 250);
+  rect(width/2, height/2, 500, 300, 8);
+  
+  // Teksti
+  fill(60, 80, 100);
+  textFont('sans-serif');
   textAlign(CENTER, CENTER);
   textSize(32);
-  text("Odota vuoroasi", width/2, height/2);
+  text('Odota vuoroasi', width/2, height/2 - 40);
+  
   textSize(16);
-  text("(Paina S simuloidaksesi)", width/2, height/2 + 40);
+  fill(120, 130, 140);
+  text('(Paina S aloittaaksesi)', width/2, height/2 + 20);
+  
+  // Footer
+  textSize(12);
+  text('© Järjestelmä palvelee sinua', width/2, height/2 + 120);
+  
+  pop();
 }
 
 function drawRejectedScreen() {
-  background(20, 0, 0); // Tummanpunainen sävy
-  fill(255, 100, 100);
-  textAlign(CENTER, CENTER);
-  textSize(40);
-  text(STATE_MESSAGES.REJECTED, width/2, height/2);
+  // Keskitetty laatikko
+  push();
+  rectMode(CENTER);
   
+  // Päälaatikko
+  fill(230, 235, 240);
+  noStroke();
+  rect(width/2, height/2, 700, 350, 8);
+  
+  // Punainen varoitusjuova
+  fill(180, 60, 60);
+  rect(width/2, height/2 - 175, 700, 8);
+  
+  // Pääviesti
+  fill(80, 90, 100);
+  textFont('sans-serif');
+  textAlign(CENTER, CENTER);
+  textSize(36);
+  text(STATE_MESSAGES.REJECTED, width/2, height/2 - 20);
+  
+  // Alaviesti
   textSize(16);
-  fill(150);
-  text("Järjestelmä on katkaissut yhteyden", width/2, height/2 + 60);
+  fill(120, 130, 140);
+  text('Järjestelmä on katkaissut yhteyden', width/2, height/2 + 60);
+  
+  // Footer
+  textSize(12);
+  text('© Järjestelmä', width/2, height/2 + 140);
+  
+  pop();
 }
 
 function drawErrorScreen(message) {
-  fill(255, 0, 0);
+  push();
   textAlign(CENTER, CENTER);
-  textSize(32);
-  text(message, width/2, height/2);
+  fill(180, 60, 60);
+  textFont('monospace');
+  textSize(20);
+  text(`VIRHE: ${message}`, width/2, height/2);
+  
+  textSize(14);
+  fill(120, 130, 140);
+  text('Järjestelmä yrittää palauttaa yhteyden...', width/2, height/2 + 40);
+  pop();
 }
 
 function drawUI(state, queueNum, yaw, pitch) {
-  // Taustaväri ja tunnelma riippuu dramaturgisesta vaiheesta
-  let bgColor;
+  // KLIININEN UI-PALKKI ALHAALLA
+  let bgColor, textColor;
+  
   if (state === "COMPLIANCE") {
     if (dramaturgicalPhase === 1) {
-      bgColor = color(0, 30, 20); // Lämmin vihreä
+      bgColor = color(240, 245, 248); // Lämmin vaaleansininen
+      textColor = color(80, 140, 120);
     } else if (dramaturgicalPhase === 2) {
-      bgColor = color(0, 20, 30); // Kylmä sininen
+      bgColor = color(225, 230, 240); // Neutraali
+      textColor = color(100, 110, 120);
     } else {
-      bgColor = color(10, 10, 30); // Hyytävä tummansininen
+      bgColor = color(210, 220, 235); // Kylmä
+      textColor = color(80, 90, 110);
     }
   } else if (state === "RESISTANCE") {
-    bgColor = color(40, 0, 0); // Punainen sävy
+    bgColor = color(245, 230, 230);
+    textColor = color(180, 60, 60);
   } else {
-    bgColor = color(20);
+    bgColor = color(230, 235, 240);
+    textColor = color(100, 110, 120);
   }
+  
+  // UI-palkin pohja
+  noStroke();
+  fill(0, 0, 0, 20);
+  rect(0, height - 203, width, 203);
   
   fill(bgColor);
-  noStroke();
-  rect(0, height - 180, width, 180);
+  rect(0, height - 200, width, 200);
+  
+  // Sininen korostusjuova
+  fill(100, 150, 200);
+  rect(0, height - 200, width, 3);
 
-  // Jonotusnumero (PIENEMPI TEKSTI)
+  // JONOTUSNUMERO
   textAlign(CENTER, CENTER);
-  textSize(60);
+  textFont('monospace');
+  textSize(min(width * 0.08, 72));
   
+  // Varjo
+  fill(0, 0, 0, 30);
+  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2 + 2, height - 138);
+  
+  // Pääteksti
   if (reachedSisyphus) {
-    fill(255, 200, 0); // Kulta/keltainen
+    fill(60, 100, 140); // Surveillance blue
   } else {
-    fill(255);
+    fill(40, 60, 80);
   }
-  
-  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2, height - 120);
+  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2, height - 140);
 
-  // Tilailmoitus - PIENEMPI TEKSTI
-  textSize(16);
-  let message = "";
+  // TILAILMOITUS
+  textFont('sans-serif');
+  textSize(18);
+  fill(textColor);
   
-  if (state === "COMPLIANCE") {
-    message = STATE_MESSAGES.COMPLIANCE[`phase${dramaturgicalPhase}`];
-    if (dramaturgicalPhase === 1) {
-      fill(150, 255, 150); // Lämmin vihreä
-    } else if (dramaturgicalPhase === 2) {
-      fill(200, 200, 200); // Neutraali harmaa
-    } else {
-      fill(180, 180, 220); // Kylmä sinertävä
-    }
-  } else if (state === "RESISTANCE") {
-    message = STATE_MESSAGES.RESISTANCE[`phase${dramaturgicalPhase}`];
-    fill(255, 100, 100);
+  let message = "";
+  if (state === "COMPLIANCE" || state === "RESISTANCE") {
+    message = STATE_MESSAGES[state][`phase${dramaturgicalPhase}`];
   } else {
     message = STATE_MESSAGES[state];
-    fill(200);
   }
   
-  text(message, width/2, height - 50);
-
-  // Debug-tiedot (voi poistaa lopullisessa versiossa)
-  fill(255, 255, 255, 100);
+  text(message, width/2, height - 70);
+  
+  // FOOTER
   textSize(12);
+  fill(120, 130, 140);
+  text('© Järjestelmä palvelee sinua', width/2, height - 30);
+
+  // DEBUG
+  textFont('monospace');
+  fill(100, 110, 120, 200);
+  textSize(11);
   textAlign(LEFT, TOP);
-  text(`Debug - Yaw: ${yaw.toFixed(2)} | Pitch: ${pitch.toFixed(2)}`, 10, 10);
-  text(`Tila: ${state} | Vaihe: ${dramaturgicalPhase} | Ajastin: ${(stateTimer/1000).toFixed(1)}s`, 10, 25);
-  text(`Sisyfos: ${reachedSisyphus}`, 10, 40);
+  text(`SYS: Y=${yaw.toFixed(2)} P=${pitch.toFixed(2)}`, 10, 10);
+  text(`STATE: ${state} | PHASE: ${dramaturgicalPhase} | T: ${(stateTimer/1000).toFixed(1)}s`, 10, 24);
+  text(`SISYPHUS: ${reachedSisyphus}`, 10, 38);
+  
+  // POISTU-nappi oikeassa yläkulmassa
+  push();
+  fill(220, 225, 230);
+  noStroke();
+  rect(width - 140, 10, 130, 40, 4);
+  fill(80, 90, 100);
+  textAlign(CENTER, CENTER);
+  textSize(12);
+  text('POISTU (S)', width - 75, 30);
+  pop();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
 }
