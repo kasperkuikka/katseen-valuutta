@@ -1,50 +1,60 @@
-// --- OSA 5: SIGNAALIN TASOITUS (Raportin Osa 4.2) ---
-// Tämä luokka laskee liukuvaa keskiarvoa tehdäkseen
-// tunnistuksesta vakaamman ja vähemmän "räpsyvän".
+// --- SIGNAALIN TASOITUS ---
 class SimpleMovingAverage {
   constructor(period) {
-    this.period = period; // Kuinka monen arvon keskiarvo lasketaan
+    this.period = period;
     this.data = [];
     this.sum = 0;
   }
 
-  // Lisää uusi arvo ja laske keskiarvo
   addData(num) {
     this.sum += num;
     this.data.push(num);
-
-    // Jos dataa on liikaa, poista vanhin arvo
     if (this.data.length > this.period) {
       this.sum -= this.data.shift();
     }
   }
 
-  // Palauta nykyinen tasoitettu keskiarvo
   getMean() {
-    if (this.data.length === 0) {
-      return 0;
-    }
+    if (this.data.length === 0) return 0;
     return this.sum / this.data.length;
   }
 }
-// --------------------------------------------------
 
+// --- GLOBAALIT MUUTTUJAT ---
+let video;
+let faceMesh;
+let faces = [];
 
-// --- Globaalit muuttujat ---
-let video;      // Tähän tallennetaan web-kameran kuva
-let faceMesh;   // Tähän tallennetaan koneoppimismalli
-let faces = []; // Tähän tallennetaan tunnistetut kasvot
-
-// Alustetaan tasoittimet. Kokeile muuttaa arvoa (esim. 5 tai 10)
-// nähdäksesi, miten se vaikuttaa vakauteen.
+// Tasoittimet
 let yawSmoother = new SimpleMovingAverage(5);
 let pitchSmoother = new SimpleMovingAverage(5);
 
+// UUSI: Hystereesi ja viive tilanvaihdossa
+let currentState = "IDLE"; // "IDLE", "COMPLIANCE", "RESISTANCE", "REJECTED"
+let stateTimer = 0;
+const STATE_CHANGE_DELAY = 1000; // 1 sekunti (ms)
+let targetState = "IDLE";
 
-// --- OSA 1: MALLIN LATAUS (Raportin Osa 3.2) ---
-// Ajetaan ennen setup-funktiota. Varmistaa, että malli on ladattu.
+// UUSI: Jonotusnumero-logiikka
+let queueNumber = 847; // Aloitusnumero
+const QUEUE_ADVANCE_RATE = 0.15; // Kuinka nopeasti numero etenee (per frame)
+const QUEUE_RETREAT_RATE = 0.25; // Kuinka nopeasti numero peruuttaa
+const SISYPHUS_NUMBER = 1; // Sisyfos-loukun numero
+let reachedSisyphus = false;
+
+// UUSI: Placeholder istumiselle (myöhemmin painoanturi)
+let isSeated = false; // Simuloidaan näppäimellä 'S'
+
+// UUSI: Tilatekstit
+const STATE_MESSAGES = {
+  IDLE: "Odota...",
+  COMPLIANCE: "Kiitos yhteistyöstä",
+  RESISTANCE: "KATSO NÄYTTÖÄ",
+  REJECTED: "Yhteytesi ei ole enää tarpeellinen."
+};
+
+// --- MALLIN LATAUS ---
 function preload() {
-  // Asetukset ml5.js versiolle 1.0+
   const options = { 
     maxFaces: 1,
     refineLandmarks: false,
@@ -54,161 +64,237 @@ function preload() {
   console.log('FaceMesh-malli ladattu.');
 }
 
-
-// --- OSA 2: ALUSTUS (Raportin Osa 3.2) ---
-// Ajetaan kerran ohjelman alussa
+// --- ALUSTUS ---
 function setup() {
-  // Luodaan piirtoalue (kangas)
   createCanvas(640, 480);
-  
-  // Käynnistetään web-kamera ja odotetaan että se on valmis
   video = createCapture(VIDEO, videoReady);
   video.size(width, height);
-  video.hide(); // Piilotetaan alkuperäinen HTML-videoelementti
+  video.hide();
+  
+  // Simuloidaan istuminen aloitettaessa (poista kun anturi on käytössä)
+  console.log('Paina S-näppäintä simuloidaksesi istumista/nousemista');
 }
 
-
-// --- UUSI FUNKTIO: Kutsutaan kun video on valmis ---
 function videoReady() {
   console.log('Video valmis, käynnistetään tunnistus...');
-  detectFaces(); // Aloitetaan jatkuva tunnistus
-}
-
-
-// --- UUSI FUNKTIO: Jatkuva kasvojen tunnistus ---
-function detectFaces() {
-  // ml5.js v1.0+ käyttää detect()-metodia callback-funktiolla
-  faceMesh.detect(video, gotFaces);
-}
-
-
-// --- OSA 3: DATAN VASTAANOTTO (Raportin Osa 3.3) ---
-// Tämä on "takaisinkutsufunktio". ml5.js kutsuu tätä automaattisesti
-// kun se on analysoinut kuvan.
-function gotFaces(results) {
-  // Tallennetaan tulokset globaaliin muuttujaan
-  faces = results;
-  
-  // TÄRKEÄ: Kutsutaan detectFaces() uudelleen jatkuvaa tunnistusta varten
   detectFaces();
 }
 
+function detectFaces() {
+  faceMesh.detect(video, gotFaces);
+}
 
-// --- OSA 4: PÄÄSILMUKKA JA LOGIIKKA ---
-// Ajetaan jatkuvasti (esim. 30 kertaa sekunnissa)
+function gotFaces(results) {
+  faces = results;
+  detectFaces();
+}
+
+// --- NÄPPÄINSIMULOINTIT (POISTETAAN KUN ANTURI ON KÄYTÖSSÄ) ---
+function keyPressed() {
+  if (key === 's' || key === 'S') {
+    isSeated = !isSeated;
+    console.log(`isSeated: ${isSeated}`);
+    if (!isSeated) {
+      // Kun käyttäjä nousee, siirrytään REJECTED-tilaan
+      currentState = "REJECTED";
+      targetState = "REJECTED";
+    } else {
+      // Kun käyttäjä istuu, aloitetaan IDLE-tilasta
+      currentState = "IDLE";
+      targetState = "IDLE";
+      queueNumber = 847; // Nollataan numero
+      reachedSisyphus = false;
+    }
+  }
+}
+
+// --- PÄÄSILMUKKA ---
 function draw() {
-  // Piirretään peilikuva videosta kankaalle.
-  // Peilikuva tuntuu luonnollisemmalta käyttäjälle.
-  push(); // Aloitetaan uusi piirtotila
-  translate(width, 0); // Siirrytään kankaan oikeaan reunaan
-  scale(-1, 1); // Käännetään kuva peilikuvaksi
+  background(20); // Tumma tausta
+  
+  // Piirretään peilikuva videosta
+  push();
+  translate(width, 0);
+  scale(-1, 1);
   image(video, 0, 0, width, height);
-  pop(); // Palautetaan piirtotila
+  pop();
 
-  // Tarkistetaan, onko kasvoja tunnistettu
+  // --- TILA C: REJECTED (Hylkäys) ---
+  if (currentState === "REJECTED") {
+    drawRejectedScreen();
+    return; // Lopetetaan tähän, ei käsitellä muita tiloja
+  }
+
+  // --- Tarkistetaan istuminen ---
+  if (!isSeated) {
+    drawWaitingScreen();
+    return;
+  }
+
+  // --- KASVOJEN TUNNISTUS JA LOGIIKKA ---
   if (faces.length > 0) {
     const face = faces[0];
 
-    // Varmistetaan, että keypoints-data on olemassa
-    // ml5.js v1.0+ käyttää 'keypoints' eikä 'scaledMesh'
     if (face.keypoints) {
-      
       const keypoints = face.keypoints;
 
-      // --- PÄÄN ASENNON LASKENTA (Raportin Osa 2.3) ---
-      // Haetaan tarvittavat maamerkit Taulukko 2:n indekseillä
-      // Huom: ml5.js v1.0+ keypoints ovat objekteja {x, y, z}
+      // Haetaan maamerkit
       const nose = keypoints[1];
       const leftCheek = keypoints[234];
       const rightCheek = keypoints[454];
       const forehead = keypoints[10];
       const chin = keypoints[152];
 
-      // Luodaan p5.Vector-oliot laskennan helpottamiseksi
-      // MUUTETTU: käytetään .x ja .y ominaisuuksia
       const noseVec = createVector(nose.x, nose.y);
       const leftCheekVec = createVector(leftCheek.x, leftCheek.y);
       const rightCheekVec = createVector(rightCheek.x, rightCheek.y);
       const foreheadVec = createVector(forehead.x, forehead.y);
       const chinVec = createVector(chin.x, chin.y);
 
-      // Lasketaan etäisyydet "proxy"-arvoille
       const distLeft = p5.Vector.dist(noseVec, leftCheekVec);
       const distRight = p5.Vector.dist(noseVec, rightCheekVec);
       const distUp = p5.Vector.dist(noseVec, foreheadVec);
       const distDown = p5.Vector.dist(noseVec, chinVec);
 
-      // Lasketaan RAA'AT proxy-arvot
-      const raw_yaw_proxy = distLeft - distRight;      // Sivuttaisliike
-      const raw_pitch_proxy = distUp - distDown;   // Pystyliike
+      const raw_yaw_proxy = distLeft - distRight;
+      const raw_pitch_proxy = distUp - distDown;
 
-      // Syötetään raa'at arvot tasoittimiin (SMA)
       yawSmoother.addData(raw_yaw_proxy);
       pitchSmoother.addData(raw_pitch_proxy);
 
-      // Käytetään TASOITETTUJA arvoja luokittelussa!
       const yaw_proxy = yawSmoother.getMean();
       const pitch_proxy = pitchSmoother.getMean();
 
-      // --- LUOKITTELU (Raportin Osa 2.4) ---
+      // --- KYNNYSARVOT (SÄÄDÄ TARPEEN MUKAAN) ---
+      const YAW_THRESHOLD = 30;
+      const PITCH_THRESHOLD = 20;
 
-      // HUOM: Säädä näitä kynnysarvoja testauksen perusteella!
-      const YAW_THRESHOLD = 35;   // Kuinka paljon päätä voi kääntää sivulle
-      const PITCH_THRESHOLD = 25; // Kuinka paljon päätä voi kallistaa ylös/alas
-
-      let state = "TILA B (Vastarinta)"; // Oletusarvo
-
-      // Jos sekä sivuttais- ETTÄ pystykallistus ovat kynnysarvojen sisällä...
-      if (
-        Math.abs(yaw_proxy) < YAW_THRESHOLD &&
-        Math.abs(pitch_proxy) < PITCH_THRESHOLD
-      ) {
-        // ...silloin käyttäjä katsoo suoraan.
-        state = "TILA A (Alistuminen)";
+      // Määritetään tavoitetila kasvojen asennon perusteella
+      if (Math.abs(yaw_proxy) < YAW_THRESHOLD && Math.abs(pitch_proxy) < PITCH_THRESHOLD) {
+        targetState = "COMPLIANCE"; // Katsoo suoraan
+      } else {
+        targetState = "RESISTANCE"; // Katsoo pois
       }
 
-      // --- VISUALISOINTI ---
-      // Piirretään tila ja debug-tiedot näytölle
-      drawFeedback(state, yaw_proxy, pitch_proxy);
+      // --- HYSTEREESI: Tilanvaihto viiveellä ---
+      if (targetState !== currentState) {
+        stateTimer += deltaTime;
+        if (stateTimer >= STATE_CHANGE_DELAY) {
+          currentState = targetState;
+          stateTimer = 0;
+          console.log(`Tila vaihdettu: ${currentState}`);
+        }
+      } else {
+        stateTimer = 0; // Nollataan ajastin jos tila pysyy samana
+      }
+
+      // --- JONOTUSNUMERO-LOGIIKKA ---
+      if (!reachedSisyphus) {
+        if (currentState === "COMPLIANCE") {
+          // Numero etenee
+          queueNumber = Math.max(SISYPHUS_NUMBER, queueNumber - QUEUE_ADVANCE_RATE);
+          
+          // Tarkistetaan Sisyfos-loukku
+          if (queueNumber <= SISYPHUS_NUMBER) {
+            queueNumber = SISYPHUS_NUMBER;
+            reachedSisyphus = true;
+            console.log("SISYFOS-LOUKKU AKTIVOITU!");
+          }
+        } else if (currentState === "RESISTANCE") {
+          // Numero peruuttaa
+          queueNumber += QUEUE_RETREAT_RATE;
+        }
+      }
+      // Jos Sisyfos-loukku on aktiivinen, numero pysyy 1:ssä
+
+      // Piirretään UI
+      drawUI(currentState, queueNumber, yaw_proxy, pitch_proxy);
 
     } else {
-      // Kasvot on tunnistettu, mutta data on puutteellista (hetkellinen häiriö)
-      drawFeedback("ODOTETAAN DATA...", 0, 0, true);
+      drawErrorScreen("ODOTETAAN DATA...");
     }
-
   } else {
-    // Jos kasvoja ei tunnisteta
-    drawFeedback("EI KASVOJA", 0, 0, true);
-    console.log("TILA: TILA B (Häiriö)");
+    drawErrorScreen("EI KASVOJA");
+    // Jos kasvoja ei näy ja ollaan istuneena, peruutetaan numeroa
+    if (isSeated && !reachedSisyphus) {
+      queueNumber += QUEUE_RETREAT_RATE;
+    }
   }
 }
 
+// --- APUFUNKTIOT ERI NÄYTTÖIHIN ---
 
-// --- APUFUNKTIO: Piirretään palaute näytölle ---
-// Tämä tekee draw()-funktiosta siistimmän
-function drawFeedback(state, yaw, pitch, noFace = false) {
-  // Piirretään tumma tausta tekstille, jotta se näkyy paremmin
-  fill(0, 0, 0, 150); // Musta, puoliksi läpinäkyvä
-  noStroke();
-  rect(10, 10, 400, 100); // x, y, leveys, korkeus
-
-  if (noFace) {
-    // Jos kasvoja ei löydy tai data puuttuu, näytä punainen tilateksti
-    fill(255, 0, 0); // Punainen
-    textSize(32);
-    // Näytetään tila ("EI KASVOJA" tai "ODOTETAAN DATA...")
-    text(state, 20, 50); 
-    return; // Lopetetaan tähän
-  }
-
-  // Jos kaikki on kunnossa, piirretään normaali palaute
-  fill(255); // Valkoinen
+function drawWaitingScreen() {
+  fill(100);
+  textAlign(CENTER, CENTER);
   textSize(32);
-  text(state, 20, 50);
-  
-  // Piirretään debug-arvot.
-  // Näiden avulla on helppo säätää kynnysarvoja.
+  text("Istu alas aloittaaksesi", width/2, height/2);
   textSize(16);
-  text(`Sivu (Yaw): ${yaw.toFixed(2)}`, 20, 80);
-  text(`Pysty (Pitch): ${pitch.toFixed(2)}`, 20, 100);
+  text("(Paina S simuloidaksesi)", width/2, height/2 + 40);
+}
+
+function drawRejectedScreen() {
+  background(20, 0, 0); // Tummanpunainen sävy
+  fill(255, 100, 100);
+  textAlign(CENTER, CENTER);
+  textSize(40);
+  text(STATE_MESSAGES.REJECTED, width/2, height/2);
+  
+  textSize(16);
+  fill(150);
+  text("Järjestelmä on katkaissut yhteyden", width/2, height/2 + 60);
+}
+
+function drawErrorScreen(message) {
+  fill(255, 0, 0);
+  textAlign(CENTER, CENTER);
+  textSize(32);
+  text(message, width/2, height/2);
+}
+
+function drawUI(state, queueNum, yaw, pitch) {
+  // Taustaväri riippuu tilasta
+  let bgColor;
+  if (state === "COMPLIANCE") {
+    bgColor = color(0, 40, 20); // Vihreä sävy
+  } else if (state === "RESISTANCE") {
+    bgColor = color(40, 0, 0); // Punainen sävy
+  } else {
+    bgColor = color(20);
+  }
+  
+  fill(bgColor);
+  noStroke();
+  rect(0, height - 200, width, 200);
+
+  // Jonotusnumero (PÄÄELEMENTTI)
+  textAlign(CENTER, CENTER);
+  textSize(80);
+  
+  if (reachedSisyphus) {
+    fill(255, 200, 0); // Kulta/keltainen = voitto?
+  } else {
+    fill(255);
+  }
+  
+  text(`OLET SEURAAVA: ${Math.ceil(queueNum)}`, width/2, height - 130);
+
+  // Tilailmoitus
+  textSize(24);
+  if (state === "COMPLIANCE") {
+    fill(100, 255, 100);
+  } else if (state === "RESISTANCE") {
+    fill(255, 100, 100);
+  } else {
+    fill(200);
+  }
+  text(STATE_MESSAGES[state], width/2, height - 50);
+
+  // Debug-tiedot (voi poistaa lopullisessa versiossa)
+  fill(255, 255, 255, 100);
+  textSize(12);
+  textAlign(LEFT, TOP);
+  text(`Debug - Yaw: ${yaw.toFixed(2)} | Pitch: ${pitch.toFixed(2)}`, 10, 10);
+  text(`Tila: ${state} | Ajastin: ${(stateTimer/1000).toFixed(1)}s`, 10, 25);
+  text(`Sisyfos: ${reachedSisyphus}`, 10, 40);
 }
